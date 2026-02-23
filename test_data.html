@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Data Test</title>
+</head>
+<body>
+    <h1>Testing JSON Data Load</h1>
+    <div id="output"></div>
+    <script>
+        fetch('feedback_stats.json?v=' + Date.now())
+            .then(response => response.json())
+            .then(data => {
+                const output = document.getElementById('output');
+                let html = '<h2>Data Loaded Successfully!</h2>';
+                html += '<p><strong>Total Responses:</strong> ' + (data.summary?.total_responses || 0) + '</p>';
+                html += '<h3>Subject Performance:</h3><ul>';
+                const subjects = data.subject_performance || {};
+                for (const [name, info] of Object.entries(subjects)) {
+                    html += '<li>' + name + ': ' + (info.average || 0).toFixed(2) + '/5</li>';
+                }
+                html += '</ul>';
+                html += '<h3>Program for Excellence:</h3><ul>';
+                const prog = data.program_excellence || {};
+                for (const [name, info] of Object.entries(prog)) {
+                    html += '<li>' + name + ': ' + (info.average || 0).toFixed(2) + '/5</li>';
+                }
+                html += '</ul>';
+                output.innerHTML = html;
+            })
+            .catch(error => {
+                document.getElementById('output').innerHTML = '<h2 style="color:red;">Error: ' + error.message + '</h2>';
+            });
+    </script>
+</body>
+</html>
