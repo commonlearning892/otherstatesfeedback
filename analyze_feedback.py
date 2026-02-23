@@ -261,6 +261,24 @@ def main():
     class_col = _resolve_column(df, ['CLASS NAME', 'Class Name', 'CLASS', 'Class'])
     orientation_col = _resolve_column(df, ['ORIENTATION', 'Orientation'])
 
+    # Add Segment column based on class
+    def classify_segment(class_name):
+        if pd.isna(class_name):
+            return 'Unknown'
+        cn = str(class_name).strip().upper()
+        # Pre Primary: UKG, LKG, NURSERY, PRE-K, IK1, IK2
+        if any(x in cn for x in ['UKG', 'LKG', 'NURSERY', 'PRE-K', 'IK1', 'IK2']):
+            return 'Pre Primary'
+        # Primary: 1st to 5th class
+        if any(x in cn for x in ['1ST', '2ND', '3RD', '4TH', '5TH', 'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH']):
+            return 'Primary'
+        # High School: 6th to 10th class
+        if any(x in cn for x in ['6TH', '7TH', '8TH', '9TH', '10TH', 'SIXTH', 'SEVENTH', 'EIGHTH', 'NINTH', 'TENTH']):
+            return 'High School'
+        return 'Unknown'
+    
+    df['Segment'] = df[class_col].apply(classify_segment) if class_col in df.columns else 'Unknown'
+
     # Canonicalize keys
     for c in (branch_col, state_col, class_col, orientation_col):
         if c in df.columns:
@@ -335,6 +353,94 @@ def main():
         except Exception:
             return None
 
+    # Derive recommendation from Overall Satisfaction columns (since CSV doesn't have recommendation field)
+    def derive_recommendation(row):
+        """Derive Yes/No/Maybe from overall satisfaction scores"""
+        avg = row.get('Overall_Avg')
+        if pd.isna(avg):
+            return None
+        # Excellent (4.5-5.0) -> Yes, Good (3.5-4.5) -> Maybe, Below 3.5 -> No
+        if avg >= 4.5:
+            return 'Yes'
+        elif avg >= 3.5:
+            return 'Maybe'
+        else:
+            return 'No'
+    
+    df['Recommendation'] = df.apply(derive_recommendation, axis=1)
+    
+    # Calculate recommendation distribution
+    rec_counts = df['Recommendation'].value_counts().to_dict()
+    rec_distribution = {
+        'Yes': rec_counts.get('Yes', 0),
+        'No': rec_counts.get('No', 0),
+        'Maybe': rec_counts.get('Maybe', 0),
+        'Not Applicable': 0
+    }
+    total_rec = rec_distribution['Yes'] + rec_distribution['No'] + rec_distribution['Maybe']
+    yes_pct = (rec_distribution['Yes'] / total_rec * 100.0) if total_rec > 0 else None
+    
+    # Derive recommendation reasons from category performance
+    from collections import Counter
+    yes_reasons = Counter()
+    no_reasons = Counter()
+    maybe_reasons = Counter()
+    
+    for _, row in df.iterrows():
+        rec = row.get('Recommendation')
+        if pd.isna(rec):
+            continue
+        
+        # Identify top 2 performing and bottom 2 performing categories
+        categories = {
+            'Academics': row.get('Subject_Avg'),
+            'Infrastructure': row.get('Infrastructure_Avg'),
+            'Environment': row.get('Environment_Avg'),
+            'Administration': row.get('Admin_Avg')
+        }
+        
+        # Filter out NaN values
+        valid_cats = {k: v for k, v in categories.items() if not pd.isna(v)}
+        if not valid_cats:
+            continue
+        
+        # Sort by score
+        sorted_cats = sorted(valid_cats.items(), key=lambda x: x[1], reverse=True)
+        
+        if rec == 'Yes':
+            # For Yes: mention top performing categories
+            for cat, score in sorted_cats[:2]:
+                if score >= 4.0:
+                    yes_reasons[f'Good {cat}'] += 1
+        elif rec == 'No':
+            # For No: mention bottom performing categories
+            for cat, score in sorted_cats[-2:]:
+                if score < 3.5:
+                    no_reasons[f'Poor {cat}'] += 1
+        elif rec == 'Maybe':
+            # For Maybe: mixed reasons
+            if sorted_cats:
+                top_cat, top_score = sorted_cats[0]
+                if top_score >= 4.0:
+                    maybe_reasons[f'Good {top_cat}'] += 1
+    
+    # Format reasons for output
+    def format_reasons(counter, total):
+        if total == 0:
+            return {'top': [], 'top_detail': [], 'total_reasons': 0}
+        items = counter.most_common(5)
+        return {
+            'total_reasons': sum(counter.values()),
+            'top': [[k, round(v*100.0/total, 1)] for k, v in items],
+            'top_detail': [[k, int(v), round(v*100.0/total, 1)] for k, v in items]
+        }
+    
+    rec_reasons = {
+        'Yes': format_reasons(yes_reasons, rec_distribution['Yes']),
+        'No': format_reasons(no_reasons, rec_distribution['No']),
+        'Maybe': format_reasons(maybe_reasons, rec_distribution['Maybe'])
+    }
+
     # Overall aggregates
     subject_perf = subject_perf_for_df(df, subj_cols)
     category_perf = category_perf_for_df(df, cat_cols)
@@ -374,7 +480,7 @@ def main():
     branch_subject_performance = {}
     branch_category_performance = {}
     overall_rating_counts_by_branch = {}
-
+    branch_rating_counts = {}
     if branch_col in df.columns:
         for b, g in df.groupby(branch_col):
             key = str(b).strip() or 'Unknown'
@@ -394,6 +500,13 @@ def main():
                 'Environment': bucket_counts_from_avg_series(g['Environment_Avg']),
                 'Infrastructure': bucket_counts_from_avg_series(g['Infrastructure_Avg']),
                 'Administration': bucket_counts_from_avg_series(g['Admin_Avg']),
+            }
+            # Generate rating counts by category group for heatmap
+            branch_rating_counts[key] = {
+                'Subjects': bucket_counts_from_avg_series(g['Subject_Avg']),
+                'Environment': bucket_counts_from_avg_series(g['Environment_Avg']),
+                'Infrastructure': bucket_counts_from_avg_series(g['Infrastructure_Avg']),
+                'Administrative Support': bucket_counts_from_avg_series(g['Admin_Avg']),
             }
 
     # State aggregates
@@ -458,6 +571,76 @@ def main():
             key = str(b).strip() or 'Unknown'
             branch_subject_performance_by[key] = build_subject_performance_by_filters(g, subj_cols, class_col, orientation_col)
 
+    # Global per-segment subject-wise analysis
+    segment_subject_perf = {}
+    
+    # Define which subjects are applicable for each segment
+    segment_subjects = {
+        'Pre Primary': ['I Language', 'II Language', 'Mathematics', 'General Science'],
+        'Primary': ['I Language', 'II Language', 'III Language', 'Mathematics', 'General Science', 'Social Studies'],
+        'High School': ['I Language', 'II Language', 'III Language', 'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Social Studies']
+    }
+    
+    for seg, gseg in df.groupby('Segment'):
+        if seg == 'Unknown':
+            continue
+        subd = {}
+        applicable_subjects = segment_subjects.get(seg, [])
+        for subject_name, subject_col in subj_cols.items():
+            # Skip subjects not applicable to this segment
+            if subject_name not in applicable_subjects:
+                continue
+            if subject_col not in gseg.columns:
+                continue
+            series = gseg[subject_col]
+            perf = perf_from_series(series)
+            if perf.get('average') is not None:
+                subd[subject_name] = perf
+        if subd:
+            segment_subject_perf[seg] = subd
+
+    # Per-branch, per-segment, subject-wise analysis
+    branch_segment_subject_perf = {}
+    if branch_col in df.columns:
+        for branch, g_branch in df.groupby(branch_col):
+            key = str(branch).strip() or 'Unknown'
+            branch_segment_subject_perf[key] = {}
+            for seg, gseg in g_branch.groupby('Segment'):
+                if seg == 'Unknown':
+                    continue
+                subd = {}
+                applicable_subjects = segment_subjects.get(seg, [])
+                for subject_name, subject_col in subj_cols.items():
+                    # Skip subjects not applicable to this segment
+                    if subject_name not in applicable_subjects:
+                        continue
+                    if subject_col not in gseg.columns:
+                        continue
+                    series = gseg[subject_col]
+                    perf = perf_from_series(series)
+                    if perf.get('average') is not None:
+                        subd[subject_name] = perf
+                if subd:
+                    branch_segment_subject_perf[key][seg] = subd
+
+    # Per-branch, per-segment aggregates for side-by-side comparisons
+    branch_segment_perf = {}
+    if branch_col in df.columns:
+        for branch, g_branch in df.groupby(branch_col):
+            key = str(branch).strip() or 'Unknown'
+            branch_segment_perf[key] = {}
+            for seg, g in g_branch.groupby('Segment'):
+                if seg == 'Unknown':
+                    continue
+                branch_segment_perf[key][seg] = {
+                    'count': int(len(g)),
+                    'subject_avg': mean_safe(g['Subject_Avg']),
+                    'environment_avg': mean_safe(g['Environment_Avg']),
+                    'infrastructure_avg': mean_safe(g['Infrastructure_Avg']),
+                    'admin_avg': mean_safe(g['Admin_Avg']),
+                    'overall_avg': mean_safe(g['Overall_Avg'])
+                }
+
     stats = {
         'summary': summary,
         'subject_performance': subject_perf,
@@ -483,6 +666,11 @@ def main():
         'state_subject_performance_by': state_subject_performance_by,
         'branch_subject_performance_by': branch_subject_performance_by,
 
+        # Segment-based subject performance (Academic sections)
+        'segment_subject_performance': segment_subject_perf,
+        'branch_segment_subject_performance': branch_segment_subject_perf,
+        'branch_segment_performance': branch_segment_perf,
+
         # Program for Excellence
         'program_excellence': prog_exc_perf,
         'program_excellence_by_branch': {},
@@ -504,18 +692,15 @@ def main():
             'classes': [],
             'subjects': [],
         },
-        'recommendation': {'distribution': {}, 'yes_pct': None},
-        'recommendation_reasons': {},
+        'recommendation': {'distribution': rec_distribution, 'yes_pct': yes_pct},
+        'recommendation_reasons': rec_reasons,
         'environment_focus': {},
-        'branch_rating_counts': {},
+        'branch_rating_counts': branch_rating_counts,
         'branch_rating_counts_by': {'class': {}, 'orientation': {}, 'pair': {}},
         'branch_recommendation_counts': {},
         'branch_recommendation_counts_by': {'class': {}, 'orientation': {}, 'pair': {}},
         'branch_recommendation_pct': {},
-        'branch_segment_performance': {},
         'branch_segment_recommendation_counts': {},
-        'branch_segment_subject_performance': {},
-        'segment_subject_performance': {},
         'branch_segment_recommendation_reasons': {},
         'concern_roles': {},
         'concern_resolution': {},

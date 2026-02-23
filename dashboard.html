@@ -295,6 +295,33 @@
                     <div class="chart-wrapper"><canvas id="overallSatisfactionChart"></canvas></div>
                     <table class="ranking-table" id="overallSatisfactionTable"></table>
                 </div>
+                <div class="chart-container">
+                    <h2>Recommendation Status</h2>
+                    <div class="chart-row">
+                        <div class="chart-wrapper"><canvas id="recommendationChart"></canvas></div>
+                        <div class="side-kpi">
+                            <div class="kpi">
+                                <div class="label">% Recommend School</div>
+                                <div class="value" id="recYesPctKpi">-</div>
+                            </div>
+                            <div class="kpi-grid" id="recCountsGrid">
+                                <div class="kpi"><div class="label">Yes</div><div class="value" id="recYesCount">-</div></div>
+                                <div class="kpi"><div class="label">No</div><div class="value" id="recNoCount">-</div></div>
+                                <div class="kpi"><div class="label">Maybe</div><div class="value" id="recMaybeCount">-</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kpi-grid" id="recReasonsGrid">
+                        <div class="kpi">
+                            <div class="reason-title yes">Why Yes (Top %)</div>
+                            <ul class="reason-list" id="recYesList"></ul>
+                        </div>
+                        <div class="kpi">
+                            <div class="reason-title no">Why No (Top %)</div>
+                            <ul class="reason-list" id="recNoList"></ul>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <section id="section-academic" class="section">

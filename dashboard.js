@@ -387,7 +387,7 @@ function renderAvgBucketsTable(tableId, rows) {
         table.style.whiteSpace = 'normal';
     }
 
-    const header = '<thead><tr><th>Item</th><th style="text-align:right;">Avg</th><th style="text-align:right;">Excellent</th><th style="text-align:right;">Good</th><th style="text-align:right;">Average</th><th style="text-align:right;">Poor</th><th style="text-align:right;">Not Applicable</th><th style="text-align:right;">Unanswered</th><th style="text-align:right;">Total</th></tr></thead>';
+    const header = '<thead><tr><th>Item</th><th style="text-align:right;">Avg</th><th style="text-align:right;">Excellent</th><th style="text-align:right;">Good</th><th style="text-align:right;">Average</th><th style="text-align:right;">Needs Improvement</th><th style="text-align:right;">Not Applicable</th><th style="text-align:right;">Unanswered</th><th style="text-align:right;">Total</th></tr></thead>';
     const body = (rows || []).map(r => {
         const label = r?.label;
         const counts = r?.counts || {};
@@ -1331,7 +1331,7 @@ function renderGroupComparison(kind) {
             const grp = counts[g] || {}; const ex = grp.Excellent||0, gd = grp.Good||0, av = grp.Average||0, pr = grp.Poor||0; const tot = ex+gd+av+pr;
             return `<tr><td>${g}</td><td>${ex}</td><td>${gd}</td><td>${av}</td><td>${pr}</td><td>${tot}</td></tr>`;
         }).join('');
-        table.innerHTML = `<thead><tr><th>Group</th><th>Excellent</th><th>Good</th><th>Average</th><th>Poor</th><th>Total</th></tr></thead><tbody>${rows}</tbody>`;
+        table.innerHTML = `<thead><tr><th>Group</th><th>Excellent</th><th>Good</th><th>Average</th><th>Needs Improvement</th><th>Total</th></tr></thead><tbody>${rows}</tbody>`;
         c.appendChild(table);
         area.appendChild(c);
     });
@@ -1702,29 +1702,100 @@ function renderExecutiveSummary(data) {
     } catch (e) { console.error(e); }
 
     // Render Overall Satisfaction chart (Academics, Administration, Transport)
+    // Hide when branch is selected to avoid extra space
     try {
-        const overallSat = data.overall_satisfaction || {};
-        const satKeys = Object.keys(overallSat).sort();
-        const satCtx = (typeof resetCanvas === 'function' ? resetCanvas('overallSatisfactionChart') : null) || document.getElementById('overallSatisfactionChart')?.getContext('2d');
-        if (satCtx && satKeys.length) {
-            const el = document.getElementById('overallSatisfactionChart');
-            if (el && el.parentElement) {
-                const h = Math.max(220, satKeys.length * 52);
-                el.parentElement.style.height = h + 'px';
-                try { el.height = h; } catch(_) {}
+        const overallSatContainer = document.querySelector('#overallSatisfactionChart')?.closest('.chart-container');
+        if (overallSatContainer) {
+            overallSatContainer.style.display = CURRENT_BRANCH ? 'none' : 'block';
+        }
+        
+        if (!CURRENT_BRANCH) {
+            const overallSat = data.overall_satisfaction || {};
+            const satKeys = Object.keys(overallSat).sort();
+            const satCtx = (typeof resetCanvas === 'function' ? resetCanvas('overallSatisfactionChart') : null) || document.getElementById('overallSatisfactionChart')?.getContext('2d');
+            if (satCtx && satKeys.length) {
+                const el = document.getElementById('overallSatisfactionChart');
+                if (el && el.parentElement) {
+                    const h = Math.max(220, satKeys.length * 52);
+                    el.parentElement.style.height = h + 'px';
+                    try { el.height = h; } catch(_) {}
+                }
+                const countsByLabel = Object.fromEntries(satKeys.map(k => [k, overallSat[k]?.rating_distribution || {}]));
+                renderBucketStackedChart('overallSatisfactionChart', satKeys, countsByLabel, { indexAxis: 'y', showAvgLabel: true });
+                
+                renderAvgBucketsTable('overallSatisfactionTable', satKeys.map(k => ({
+                    label: k,
+                    avg: overallSat[k]?.average ?? null,
+                    counts: overallSat[k]?.rating_distribution || {}
+                })));
             }
-            const countsByLabel = Object.fromEntries(satKeys.map(k => [k, overallSat[k]?.rating_distribution || {}]));
-            renderBucketStackedChart('overallSatisfactionChart', satKeys, countsByLabel, { indexAxis: 'y', showAvgLabel: true });
-            
-            renderAvgBucketsTable('overallSatisfactionTable', satKeys.map(k => ({
-                label: k,
-                avg: overallSat[k]?.average ?? null,
-                counts: overallSat[k]?.rating_distribution || {}
-            })));
         }
     } catch (e) { console.error('Error rendering overall satisfaction:', e); }
 
-    // Skip recommendation and segment rendering (data not available)
+    // Render Recommendation Status (use RAW_DATA for branch-specific data)
+    const recData = CURRENT_BRANCH ? RAW_DATA : data;
+    const rec = recData?.recommendation?.distribution || {};
+    const recCtx = (typeof resetCanvas === 'function' ? resetCanvas('recommendationChart') : null) || document.getElementById('recommendationChart')?.getContext('2d');
+    if (recCtx) {
+        const labels = ['Yes','No','Maybe'];
+        const values = labels.map(l => rec[l] || 0);
+        new Chart(recCtx, {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data: values, backgroundColor: ['#43a047','#e53935','#fb8c00'] }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, pieValueLabel: { fontSize: 11 } } },
+            plugins: [PieValueLabelPlugin]
+        });
+    }
+    // Populate side KPI for % Recommend School next to the pie
+    try {
+        const el = document.getElementById('recYesPctKpi');
+        if (el) {
+            const yes = rec['Yes'] || 0;
+            const total = (rec['Yes']||0) + (rec['No']||0) + (rec['Maybe']||0);
+            const pct = total ? (yes*100/total) : 0;
+            el.textContent = `${yes.toLocaleString()} (${pct.toFixed(1)}%)`;
+        }
+    } catch (e) { }
+    // Populate recommendation counts KPIs (counts + %)
+    try {
+        const total = (rec['Yes'] || 0) + (rec['No'] || 0) + (rec['Maybe'] || 0);
+        const fmt = (n) => {
+            const num = n || 0;
+            return total > 0 ? `${num.toLocaleString()} (${(num/total*100).toFixed(1)}%)` : num.toLocaleString();
+        };
+        const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmt(val); };
+        setTxt('recYesCount', rec['Yes'] || 0);
+        setTxt('recNoCount', rec['No'] || 0);
+        setTxt('recMaybeCount', rec['Maybe'] || 0);
+    } catch (e) { }
+    const reasons = recData?.recommendation_reasons || {};
+    const fillList = (id, items) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        let arr = [];
+        if (items && Array.isArray(items.top_detail)) {
+            arr = items.top_detail.slice(); // [label, count, pct]
+        } else if (items && Array.isArray(items.top)) {
+            arr = items.top.map(([l,p]) => [l, null, p]);
+        }
+        // Move 'Other' to bottom, then sort by pct desc
+        arr.sort((a,b) => {
+            const la = String(a[0]||'').toLowerCase();
+            const lb = String(b[0]||'').toLowerCase();
+            const isOtherA = la === 'other' || la.includes('other');
+            const isOtherB = lb === 'other' || lb.includes('other');
+            if (isOtherA !== isOtherB) return isOtherA ? 1 : -1;
+            return (b[2]||0) - (a[2]||0);
+        });
+        el.innerHTML = arr.map(([label, count, pct]) => {
+            const name = toEnglishLabel(label);
+            const pctStr = pct!=null ? `${pct}%` : '-';
+            const cnt = count!=null ? ` — ${Number(count).toLocaleString()}` : '';
+            return `<li><span>${name}${cnt}</span><span>${pctStr}</span></li>`;
+        }).join('');
+    };
+    fillList('recYesList', reasons.Yes);
+    fillList('recNoList', reasons.No);
 
     const brCtx = (typeof resetCanvas === 'function' ? resetCanvas('branchOverallChart') : null) || document.getElementById('branchOverallChart')?.getContext('2d');
     if (brCtx && data.rankings?.branches) {
@@ -1969,7 +2040,7 @@ function renderAcademicSection(data) {
         table.style.width = '100%';
         table.style.wordBreak = 'break-word';
         table.style.whiteSpace = 'normal';
-        const header = '<thead><tr><th>Subject</th><th>Excellent</th><th>Good</th><th>Average</th><th>Poor</th><th>Not Applicable</th><th>Unanswered</th><th>Total Respondents</th></tr></thead>';
+        const header = '<thead><tr><th>Subject</th><th>Excellent</th><th>Good</th><th>Average</th><th>Needs Improvement</th><th>Not Applicable</th><th>Unanswered</th><th>Total Respondents</th></tr></thead>';
         const rows = subjectsSorted.map(name => {
             const dist = subj[name]?.rating_distribution || {};
             let exc = 0, good = 0, avg = 0, poor = 0, na = 0, unanswered = 0;
@@ -2050,7 +2121,7 @@ function renderProgramExcellence(data) {
         table.style.width = '100%';
         table.style.wordBreak = 'break-word';
         table.style.whiteSpace = 'normal';
-        const header = '<thead><tr><th>Question</th><th>Avg</th><th>Excellent</th><th>Good</th><th>Average</th><th>Poor</th><th>Not Applicable</th><th>Unanswered</th><th>Total</th></tr></thead>';
+        const header = '<thead><tr><th>Question</th><th>Avg</th><th>Excellent</th><th>Good</th><th>Average</th><th>Needs Improvement</th><th>Not Applicable</th><th>Unanswered</th><th>Total</th></tr></thead>';
         const rows = keys.map(k => {
             const c = pe[k]?.rating_distribution || {};
             const exc = bucketCountGet(c,'Excellent');
@@ -2201,7 +2272,7 @@ function renderAcademicSegmentBlocks() {
         // Histogram removed for segment cards; keep only table
 
         // Table rows (percentages are over segment responses; include Unanswered so columns add up to 100%)
-        const header = '<thead><tr><th>Subject</th><th>Excellent</th><th>Good</th><th>Average</th><th>Poor</th><th>Not Applicable</th><th>Unanswered</th><th>Total Respondents</th></tr></thead>';
+        const header = '<thead><tr><th>Subject</th><th>Excellent</th><th>Good</th><th>Average</th><th>Needs Improvement</th><th>Not Applicable</th><th>Unanswered</th><th>Total Respondents</th></tr></thead>';
         const rows = subjects.map(name => {
             const dist = subjMap[name]?.rating_distribution || {};
             let exc = 0, good = 0, avg = 0, poor = 0, na = 0, un = 0;
@@ -2388,7 +2459,7 @@ function renderEnvironmentSection(data) {
         table.style.width = '100%';
         table.style.wordBreak = 'break-word';
         table.style.whiteSpace = 'normal';
-        const header = '<thead><tr><th>Item</th><th>Excellent</th><th>Good</th><th>Average</th><th>Poor</th><th>Not Applicable</th><th>Total</th></tr></thead>';
+        const header = '<thead><tr><th>Item</th><th>Excellent</th><th>Good</th><th>Average</th><th>Needs Improvement</th><th>Not Applicable</th><th>Total</th></tr></thead>';
         const rows = displayLabels.map((disp, idx) => {
             const raw = rawLabels[idx];
             const dist = envCat[raw]?.rating_distribution || {};
@@ -2525,7 +2596,8 @@ function renderInfrastructureSection(data) {
         console.log('🏗️ Rendering heatmap, branch_performance:', Object.keys(data.branch_performance || {}));
         const branchesAll = RAW_DATA?.branch_performance || {};
         const branchesForRanks = (branchesAll && Object.keys(branchesAll).length) ? branchesAll : (data.branch_performance || {});
-        const brRatingCounts = (data.branch_rating_counts || RAW_DATA?.branch_rating_counts || {});
+        // Always use RAW_DATA for rating counts to ensure Needs Improvement data is available
+        const brRatingCounts = RAW_DATA?.branch_rating_counts || data.branch_rating_counts || {};
         const cols = ['Academics','Infrastructure','Environment','Administration'];
         const groupKey = {
             Academics: 'Subjects',
@@ -2700,9 +2772,11 @@ function renderInfrastructureSection(data) {
             const focus = (n.focus && n.focusPct != null && !isNaN(n.focusPct))
                 ? `${toEnglishLabel(n.focus)} ${n.focusPct.toFixed(1)}%${(n.focusNeedCount != null && !isNaN(n.focusNeedCount)) ? ` (${Number(n.focusNeedCount).toLocaleString()})` : ''}`
                 : '-';
+            // Always show focus area (category needing most improvement)
+            const focusLine = (focus !== '-') ? `<div style="font-size:0.82em; font-weight:800; opacity:0.95; margin-top:2px;">Focus: ${focus}</div>` : '';
             return `<td style="background:${bg}; color:#fff; text-align:center; padding:8px;">`+
                 `<div style="font-weight:900; font-size:1.05em; line-height:1.1;">${vOk ? `${n.overall.toFixed(1)}%${overallCnt}` : '-'}</div>`+
-                `<div style="font-size:0.82em; font-weight:800; opacity:0.95; margin-top:2px;">Focus: ${focus}</div></td>`;
+                focusLine+`</td>`;
         };
 
         const thStyle = (col) => {
@@ -2719,10 +2793,12 @@ function renderInfrastructureSection(data) {
             headerHtml += `<th style="${thStyle('Academics')}">Academics</th>`+
                 `<th style="${thStyle('Infrastructure')}">Infrastructure</th>`+
                 `<th style="${thStyle('Environment')}">Environment</th>`+
-                `<th style="${thStyle('Administration')}">Administration</th>`;
+                `<th style="${thStyle('Administration')}">Administration</th>`+
+                `<th style="background:#d32f2f;color:#fff;">Needs Improvement</th>`;
         } else {
             // Show only selected category column
-            headerHtml += `<th style="${thStyle(selectedCategory)}">${selectedCategory}</th>`;
+            headerHtml += `<th style="${thStyle(selectedCategory)}">${selectedCategory}</th>`+
+                `<th style="background:#d32f2f;color:#fff;">Needs Improvement</th>`;
         }
         
         const rowsHtml = rows.map(r => {
@@ -2735,10 +2811,12 @@ function renderInfrastructureSection(data) {
                 cellsHtml += `${makeMetricCell(r.Branch, 'Academics', r.Academics)}`+
                     `${makeMetricCell(r.Branch, 'Infrastructure', r.Infrastructure)}`+
                     `${makeMetricCell(r.Branch, 'Environment', r.Environment)}`+
-                    `${makeMetricCell(r.Branch, 'Administration', r.Administration)}`;
+                    `${makeMetricCell(r.Branch, 'Administration', r.Administration)}`+
+                    `${makeNeedsCell(r.Branch)}`;
             } else {
                 // Show only selected category
-                cellsHtml += makeMetricCell(r.Branch, selectedCategory, r[selectedCategory]);
+                cellsHtml += makeMetricCell(r.Branch, selectedCategory, r[selectedCategory])+
+                    `${makeNeedsCell(r.Branch)}`;
             }
             
             return `<tr>${cellsHtml}</tr>`;
