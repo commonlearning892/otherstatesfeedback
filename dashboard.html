@@ -286,6 +286,16 @@
             <section id="section-exec" class="section active">
                 <div class="kpi-grid" id="execKpiGrid"></div>
                 <div class="chart-container">
+                    <h2>Segment Responses (All / Selected Branch)</h2>
+                    <div class="kpi-grid" id="segmentTotalsGrid"></div>
+                </div>
+                <div class="chart-container">
+                    <h2>Segment Overall (All / Selected Branch)</h2>
+                    <div class="kpi-grid" id="segmentCountsGrid"></div>
+                    <div class="chart-wrapper" style="height: 180px;"><canvas id="segmentYNMChart"></canvas></div>
+                    <div class="chart-wrapper"><canvas id="segmentOverallChart"></canvas></div>
+                </div>
+                <div class="chart-container">
                     <h2>Overall Satisfaction by Category</h2>
                     <div class="chart-wrapper"><canvas id="summaryCategoryChart"></canvas></div>
                     <div id="summaryCategoryTableWrap">
@@ -323,16 +333,6 @@
                             <ul class="reason-list" id="recNoList"></ul>
                         </div>
                     </div>
-                </div>
-                <div class="chart-container">
-                    <h2>Segment Responses (All / Selected Branch)</h2>
-                    <div class="kpi-grid" id="segmentTotalsGrid"></div>
-                </div>
-                <div class="chart-container">
-                    <h2>Segment Overall (All / Selected Branch)</h2>
-                    <div class="kpi-grid" id="segmentCountsGrid"></div>
-                    <div class="chart-wrapper" style="height: 180px;"><canvas id="segmentYNMChart"></canvas></div>
-                    <div class="chart-wrapper"><canvas id="segmentOverallChart"></canvas></div>
                 </div>
             </section>
 
@@ -423,6 +423,6 @@
         </div>
     </div>
     
-    <script src="dashboard.js"></script>
+    <script src="dashboard.js?v=3"></script>
 </body>
 </html>
