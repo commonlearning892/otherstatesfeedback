@@ -206,6 +206,8 @@
         .tab-btn:hover { transform: translateY(-2px); }
         .tab-btn.active { outline: 3px solid rgba(255,255,255,0.8); }
         .section { display: block; }
+        /* Ensure Segment Overall KPI numbers and % fit on one line */
+        #segmentCountsGrid .kpi .value { font-size: clamp(0.95rem, 1.4vw, 1.4rem); white-space: nowrap; }
         /* Accordion styles */
         .section-toggle { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #ffd700 0%, #ff9d00 100%); color: #001f3f; border-radius: 12px; padding: 10px 14px; font-weight: 800; margin: 16px 0 8px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,0.15); font-size: clamp(0.95rem, 1.2vw, 1.05rem); }
         .section.collapsed .section-content { display: none; }
@@ -321,6 +323,16 @@
                             <ul class="reason-list" id="recNoList"></ul>
                         </div>
                     </div>
+                </div>
+                <div class="chart-container">
+                    <h2>Segment Responses (All / Selected Branch)</h2>
+                    <div class="kpi-grid" id="segmentTotalsGrid"></div>
+                </div>
+                <div class="chart-container">
+                    <h2>Segment Overall (All / Selected Branch)</h2>
+                    <div class="kpi-grid" id="segmentCountsGrid"></div>
+                    <div class="chart-wrapper" style="height: 180px;"><canvas id="segmentYNMChart"></canvas></div>
+                    <div class="chart-wrapper"><canvas id="segmentOverallChart"></canvas></div>
                 </div>
             </section>
 

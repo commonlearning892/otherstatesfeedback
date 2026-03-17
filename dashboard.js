@@ -892,6 +892,153 @@ function initAcademicFilters(data) {
     }
 }
 
+// Aggregate segment data for All or Selected Branch
+function aggregateSegments(branch) {
+    console.log('📊 aggregateSegments called for branch:', branch);
+    const order = ['Pre Primary','Primary','High School'];
+    const perfByBranch = RAW_DATA?.branch_segment_performance || {};
+    const recByBranch = RAW_DATA?.branch_segment_recommendation_counts || {};
+    const result = {};
+    if (branch) {
+        const p = perfByBranch[branch] || {};
+        const r = recByBranch[branch] || {};
+        order.forEach(seg => {
+            if (!p[seg] && !r[seg]) return;
+            const pc = p[seg] || {};
+            const rc = r[seg] || {};
+            result[seg] = {
+                count: pc.count || ((rc.Yes||0)+(rc.No||0)+(rc.Maybe||0)),
+                overall_avg: (pc.overall_avg!=null && !isNaN(pc.overall_avg)) ? pc.overall_avg : null,
+                rec: { Yes: rc.Yes||0, No: rc.No||0, Maybe: rc.Maybe||0 }
+            };
+        });
+        console.log('📊 Result for branch:', result);
+        return result;
+    }
+    // Aggregate across all branches
+    for (const [br, segs] of Object.entries(perfByBranch)) {
+        for (const [seg, vals] of Object.entries(segs)) {
+            if (!result[seg]) result[seg] = { count: 0, overall_wsum: 0, overall_avg: null, rec: { Yes:0, No:0, Maybe:0 } };
+            const rc = ((recByBranch[br]||{})[seg]) || {};
+            const c = vals.count || ((rc.Yes||0)+(rc.No||0)+(rc.Maybe||0)) || 0;
+            result[seg].count += c;
+            if (vals.overall_avg!=null && !isNaN(vals.overall_avg) && c) result[seg].overall_wsum += vals.overall_avg * c;
+        }
+    }
+    for (const [, segs] of Object.entries(recByBranch)) {
+        for (const [seg, rc] of Object.entries(segs)) {
+            if (!result[seg]) result[seg] = { count: 0, overall_wsum: 0, overall_avg: null, rec: { Yes:0, No:0, Maybe:0 } };
+            result[seg].rec.Yes += rc.Yes || 0;
+            result[seg].rec.No += rc.No || 0;
+            result[seg].rec.Maybe += rc.Maybe || 0;
+        }
+    }
+    Object.keys(result).forEach(seg => {
+        const c = result[seg].count || 0;
+        result[seg].overall_avg = c ? (result[seg].overall_wsum / c) : null;
+    });
+    console.log('📊 Result for all branches:', result);
+    return result;
+}
+
+function renderSegmentTotalsGrid() {
+    const grid = document.getElementById('segmentTotalsGrid');
+    if (!grid) { console.error('❌ segmentTotalsGrid element not found'); return; }
+    console.log('📊 Rendering segmentTotalsGrid');
+    const order = ['Pre Primary','Primary','High School'];
+    const agg = aggregateSegments(CURRENT_BRANCH);
+    const segs = order.filter(s => agg[s]);
+    if (!segs.length) { grid.innerHTML = '<div class="kpi"><div class="label">No responses</div><div class="value">0</div></div>'; return; }
+    grid.innerHTML = segs.map(s => {
+        const d = agg[s];
+        const total = d.count || 0;
+        return `<div class="kpi"><div class="label">${s} — Total Responses</div><div class="value">${(total||0).toLocaleString()}</div></div>`;
+    }).join('');
+}
+
+function renderSegmentCountsGrid() {
+    const grid = document.getElementById('segmentCountsGrid');
+    if (!grid) { console.error('❌ segmentCountsGrid element not found'); return; }
+    console.log('📊 Rendering segmentCountsGrid');
+    const order = ['Pre Primary','Primary','High School'];
+    const agg = aggregateSegments(CURRENT_BRANCH);
+    const segs = order.filter(s => agg[s]);
+    grid.innerHTML = segs.map(s => {
+        const d = agg[s];
+        const total = d.count || 0;
+        const y = d.rec?.Yes || 0, n = d.rec?.No || 0, m = d.rec?.Maybe || 0;
+        const den = y + n + m;
+        const pct = (v) => den ? ` (${(v/den*100).toFixed(1)}%)` : '';
+        return `
+            <div class="kpi"><div class="label">${toEnglishLabel(s)} — Responses</div><div class="value">${(total||0).toLocaleString()}</div></div>
+            <div class="kpi"><div class="label">${toEnglishLabel(s)}: Yes</div><div class="value">${y.toLocaleString()}${pct(y)}</div></div>
+            <div class="kpi"><div class="label">${toEnglishLabel(s)}: No</div><div class="value">${n.toLocaleString()}${pct(n)}</div></div>
+            <div class="kpi"><div class="label">${toEnglishLabel(s)}: Maybe</div><div class="value">${m.toLocaleString()}${pct(m)}</div></div>
+        `;
+    }).join('');
+}
+
+function renderSegmentYNMChart() {
+    const canvas = document.getElementById('segmentYNMChart');
+    if (!canvas) return;
+    const order = ['Pre Primary','Primary','High School'];
+    const agg = aggregateSegments(CURRENT_BRANCH);
+    const labels = order.filter(s => agg[s]);
+    if (!labels.length) return;
+    const yes = labels.map(l => (agg[l].rec?.Yes||0));
+    const maybe = labels.map(l => (agg[l].rec?.Maybe||0));
+    const no = labels.map(l => (agg[l].rec?.No||0));
+    const avgByLabel = Object.fromEntries(labels.map(l => [l, (agg[l].overall_avg!=null && !isNaN(agg[l].overall_avg)) ? agg[l].overall_avg : null]));
+    const totals = labels.map((_, i) => (Number(yes[i])||0) + (Number(maybe[i])||0) + (Number(no[i])||0));
+    const ctx = (typeof resetCanvas === 'function' ? resetCanvas('segmentYNMChart') : null) || canvas.getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Yes', data: yes, backgroundColor: '#43a047', stack: 'ynm' },
+                { label: 'Maybe', data: maybe, backgroundColor: '#fb8c00', stack: 'ynm' },
+                { label: 'No', data: no, backgroundColor: '#e53935', stack: 'ynm' }
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { right: 34 } },
+            plugins: {
+                legend: { position: 'bottom' },
+                avgValueLabel: { avgByLabel, labelsFull: labels, fontSize: 11 },
+                stackedValueLabel: { showSegments: true, showTotal: false, fontSize: 10, minPx: 20 }
+            },
+            scales: { x: { stacked: true }, y: { stacked: true } }
+        },
+        plugins: [AvgValueLabelPlugin, StackedValueLabelPlugin]
+    });
+}
+
+function renderSegmentOverallChart() {
+    const order = ['Pre Primary','Primary','High School'];
+    const agg = aggregateSegments(CURRENT_BRANCH);
+    const labels = order.filter(s => agg[s]);
+    const el = document.getElementById('segmentOverallChart');
+    if (!el || !labels.length) return;
+    const values = labels.map(s => (agg[s].overall_avg==null || isNaN(agg[s].overall_avg)) ? 0 : agg[s].overall_avg);
+    const ctx = (typeof resetCanvas === 'function' ? resetCanvas('segmentOverallChart') : null) || el.getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Overall Avg', data: values, backgroundColor: ['#42a5f5','#66bb6a','#ffa726'].slice(0, labels.length) }] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20 } },
+            scales: { y: { beginAtZero: true, max: 5 } },
+            plugins: { barValueLabel: { decimals: 2, fontSize: 12 } }
+        },
+        plugins: [BarValueLabelPlugin]
+    });
+}
+
 function renderDashboard(data) {
     console.log('🎬 renderDashboard called');
     console.log('📦 RAW_DATA summary:', {
@@ -1678,6 +1825,14 @@ function renderExecutiveSummary(data) {
         `;
     }
 
+    // Render segment overall sections
+    try { 
+        renderSegmentTotalsGrid(); 
+        renderSegmentCountsGrid(); 
+        renderSegmentYNMChart(); 
+        renderSegmentOverallChart(); 
+    } catch (e) { console.error('Error rendering segment sections:', e); }
+
     try {
         const counts = data.overall_rating_counts || {};
         const order = ['Overall Satisfaction','Academics','Environment','Infrastructure','Administration'];
@@ -1796,6 +1951,9 @@ function renderExecutiveSummary(data) {
     };
     fillList('recYesList', reasons.Yes);
     fillList('recNoList', reasons.No);
+
+    // Render segment overall sections
+    try { renderSegmentTotalsGrid(); renderSegmentCountsGrid(); renderSegmentYNMChart(); renderSegmentOverallChart(); } catch (e) { console.error('Error rendering segment sections:', e); }
 
     const brCtx = (typeof resetCanvas === 'function' ? resetCanvas('branchOverallChart') : null) || document.getElementById('branchOverallChart')?.getContext('2d');
     if (brCtx && data.rankings?.branches) {

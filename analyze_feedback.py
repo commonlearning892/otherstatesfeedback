@@ -625,10 +625,16 @@ def main():
 
     # Per-branch, per-segment aggregates for side-by-side comparisons
     branch_segment_perf = {}
+    branch_segment_recommendation_counts = {}
+    branch_segment_recommendation_reasons = {}
+    
     if branch_col in df.columns:
         for branch, g_branch in df.groupby(branch_col):
             key = str(branch).strip() or 'Unknown'
             branch_segment_perf[key] = {}
+            branch_segment_recommendation_counts[key] = {}
+            branch_segment_recommendation_reasons[key] = {}
+            
             for seg, g in g_branch.groupby('Segment'):
                 if seg == 'Unknown':
                     continue
@@ -639,6 +645,68 @@ def main():
                     'infrastructure_avg': mean_safe(g['Infrastructure_Avg']),
                     'admin_avg': mean_safe(g['Admin_Avg']),
                     'overall_avg': mean_safe(g['Overall_Avg'])
+                }
+                
+                # Calculate recommendation counts for this segment
+                seg_rec_counts = g['Recommendation'].value_counts().to_dict()
+                branch_segment_recommendation_counts[key][seg] = {
+                    'Yes': seg_rec_counts.get('Yes', 0),
+                    'No': seg_rec_counts.get('No', 0),
+                    'Maybe': seg_rec_counts.get('Maybe', 0)
+                }
+                
+                # Calculate recommendation reasons for this segment
+                seg_yes_reasons = Counter()
+                seg_no_reasons = Counter()
+                seg_maybe_reasons = Counter()
+                
+                for _, row in g.iterrows():
+                    rec = row.get('Recommendation')
+                    if pd.isna(rec):
+                        continue
+                    
+                    categories = {
+                        'Academics': row.get('Subject_Avg'),
+                        'Infrastructure': row.get('Infrastructure_Avg'),
+                        'Environment': row.get('Environment_Avg'),
+                        'Administration': row.get('Admin_Avg')
+                    }
+                    valid_cats = {k: v for k, v in categories.items() if not pd.isna(v)}
+                    if not valid_cats:
+                        continue
+                    
+                    sorted_cats = sorted(valid_cats.items(), key=lambda x: x[1], reverse=True)
+                    
+                    if rec == 'Yes':
+                        for cat, score in sorted_cats[:2]:
+                            if score >= 4.0:
+                                seg_yes_reasons[f'Good {cat}'] += 1
+                    elif rec == 'No':
+                        for cat, score in sorted_cats[-2:]:
+                            if score < 3.5:
+                                seg_no_reasons[f'Poor {cat}'] += 1
+                    elif rec == 'Maybe':
+                        if sorted_cats:
+                            top_cat, top_score = sorted_cats[0]
+                            if top_score >= 4.0:
+                                seg_maybe_reasons[f'Good {top_cat}'] += 1
+                
+                # Format reasons
+                def format_seg_reasons(counter, total):
+                    if total == 0:
+                        return {'top': [], 'top_detail': [], 'total_reasons': 0}
+                    items = counter.most_common(5)
+                    return {
+                        'total_reasons': sum(counter.values()),
+                        'top': [[k, round(v*100.0/total, 1)] for k, v in items],
+                        'top_detail': [[k, int(v), round(v*100.0/total, 1)] for k, v in items]
+                    }
+                
+                seg_rec = branch_segment_recommendation_counts[key][seg]
+                branch_segment_recommendation_reasons[key][seg] = {
+                    'Yes': format_seg_reasons(seg_yes_reasons, seg_rec['Yes']),
+                    'No': format_seg_reasons(seg_no_reasons, seg_rec['No']),
+                    'Maybe': format_seg_reasons(seg_maybe_reasons, seg_rec['Maybe'])
                 }
 
     stats = {
@@ -700,8 +768,8 @@ def main():
         'branch_recommendation_counts': {},
         'branch_recommendation_counts_by': {'class': {}, 'orientation': {}, 'pair': {}},
         'branch_recommendation_pct': {},
-        'branch_segment_recommendation_counts': {},
-        'branch_segment_recommendation_reasons': {},
+        'branch_segment_recommendation_counts': branch_segment_recommendation_counts,
+        'branch_segment_recommendation_reasons': branch_segment_recommendation_reasons,
         'concern_roles': {},
         'concern_resolution': {},
     }
